@@ -1,0 +1,195 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+
+  <!--
+    Product and component GUIDs are permanent package identities. Do not change
+    them after the first released MSI. ProductCode is intentionally generated
+    by WiX for each build so that normal releases are major upgrades.
+  -->
+  <Package Id="Zultys.NCall.Bridge"
+           Name="Zultys nCall Bridge"
+           Manufacturer="Zultys"
+           Version="$(var.ProductVersion)"
+           UpgradeCode="{D077B2FF-DC29-4625-93FB-F752BEDECEDC}"
+           Scope="perMachine"
+           InstallerVersion="500">
+
+    <SummaryInformation Description="Zultys MX WebSocket to nSolve nCall TAPI bridge" />
+    <MajorUpgrade Schedule="afterInstallInitialize"
+                  DowngradeErrorMessage="A newer version of Zultys nCall Bridge is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- %ProgramFiles%\Zultys nCall Bridge -->
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Zultys nCall Bridge" />
+    </StandardDirectory>
+
+    <!-- %ProgramData%\Zultys nCall Bridge; config is created after install. -->
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="BRIDGEDATAFOLDER" Name="Zultys nCall Bridge" />
+    </StandardDirectory>
+
+    <ComponentGroup Id="BridgeApplicationComponents" Directory="INSTALLFOLDER">
+      <Component Id="BridgeServiceComponent"
+                 Guid="{A84B2F7F-2A64-43AF-852E-9B30BB24B78B}"
+                 Bitness="always64">
+        <File Id="BridgeServiceExe" Source="$(var.BridgeServiceExe)" KeyPath="yes" />
+
+        <ServiceInstall Id="InstallBridgeService"
+                        Name="ZultysNCallBridge"
+                        DisplayName="Zultys nCall Bridge"
+                        Description="Bridges Zultys MX call control to the local nCall TAPI provider."
+                        Type="ownProcess"
+                        Start="auto"
+                        ErrorControl="normal"
+                        Account="NT AUTHORITY\LocalService"
+                        Vital="yes">
+          <!--
+            WiX 6 rejects the MSI ServiceConfig table because Windows
+            Installer documents it as unreliable. The standard auto-start
+            setting above starts this LocalService process, while the
+            supported Util extension below configures its recovery policy.
+          -->
+          <util:ServiceConfig FirstFailureActionType="restart"
+                              SecondFailureActionType="restart"
+                              ThirdFailureActionType="restart"
+                              ResetPeriodInDays="1"
+                              RestartServiceDelayInSeconds="60" />
+        </ServiceInstall>
+
+        <ServiceControl Id="ControlBridgeService"
+                        Name="ZultysNCallBridge"
+                        Start="install"
+                        Stop="both"
+                        Remove="uninstall"
+                        Wait="yes" />
+      </Component>
+
+      <Component Id="ConfigurationUtilityComponent"
+                 Guid="{39E1E7E5-3DC5-4CA9-A4C0-A0E38C4BC50C}"
+                 Bitness="always64">
+        <File Id="ConfigurationUtilityExe" Source="$(var.ConfigExe)" KeyPath="yes" />
+      </Component>
+
+      <Component Id="DiagnosticsUtilityComponent"
+                 Guid="{D65E03E1-349D-4B69-9D4F-A7FF55F91AD7}"
+                 Bitness="always64">
+        <File Id="DiagnosticsUtilityExe" Source="$(var.DiagnosticsExe)" KeyPath="yes" />
+      </Component>
+
+      <Component Id="ProviderRegistrationUtilityComponent"
+                 Guid="{46276AD3-D895-4A74-815E-B8B77A604662}"
+                 Bitness="always64">
+        <File Id="ProviderRegistrationExe" Source="$(var.ProviderRegistrationExe)" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <!--
+      The .NET service publish directory contains supporting assemblies and
+      native runtime files, but deliberately excludes ZultysNCallBridge.exe:
+      that executable is the service component's key path above.
+    -->
+    <ComponentGroup Id="BridgeRuntimePayload" Directory="INSTALLFOLDER">
+      <?if $(var.BridgeRuntimePayload) != "" ?>
+      <Files Include="$(var.BridgeRuntimePayload)\**" />
+      <?endif ?>
+    </ComponentGroup>
+
+    <!--
+      lineAddProviderW records the absolute provider path. Keeping the native
+      TSP beside its service avoids an MSI system-folder component and allows
+      uninstall to remove it after the provider is unregistered.
+    -->
+    <ComponentGroup Id="TspComponents" Directory="INSTALLFOLDER">
+      <Component Id="TspProviderComponent"
+                 Guid="{0E7ABDF4-BE9F-4D14-9AF7-81BE13595949}"
+                 Bitness="always64">
+        <File Id="TspProviderDll" Source="$(var.TspDll)" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <ComponentGroup Id="BridgeDataComponents" Directory="BRIDGEDATAFOLDER">
+      <Component Id="BridgeDataDirectoryComponent"
+                 Guid="{B7241A8A-FB44-4626-B4AE-039616B6B00D}"
+                 Bitness="always64">
+        <CreateFolder />
+        <!-- The service creates config.json and applies its final ACL itself. -->
+        <RegistryValue Root="HKLM"
+                       Key="Software\Zultys\NCallBridge"
+                       Name="ConfigDirectory"
+                       Type="string"
+                       Value="[BRIDGEDATAFOLDER]"
+                       KeyPath="yes" />
+      </Component>
+
+      <Component Id="ProviderRegistrationStateComponent"
+                 Guid="{0BDF80E1-6003-4C41-BD61-3EE8BE0BFD14}"
+                 Bitness="always64"
+                 NeverOverwrite="yes">
+        <!-- The registration helper replaces 0 with lineAddProvider's ID. -->
+        <RegistryValue Root="HKLM"
+                       Key="Software\Zultys\NCallBridge"
+                       Name="ProviderId"
+                       Type="integer"
+                       Value="0"
+                       KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <Feature Id="MainFeature" Title="Zultys nCall Bridge" Level="1" AllowAdvertise="no">
+      <ComponentGroupRef Id="BridgeApplicationComponents" />
+      <ComponentGroupRef Id="BridgeRuntimePayload" />
+      <ComponentGroupRef Id="TspComponents" />
+      <ComponentGroupRef Id="BridgeDataComponents" />
+    </Feature>
+
+    <!--
+      Registration is on in a normal package. The x64 helper obtains paths
+      from its own installed location and supports:
+
+        install           -> lineAddProvider, write ProviderId
+        uninstall         -> lineRemoveProvider using ProviderId
+        rollback-install  -> remove a just-added provider when MSI rolls back
+
+      Do not add passwords or MX configuration to CustomActionData. A helper
+      failure fails the install and invokes the rollback action. Setting
+      EnableProviderRegistration=false is reserved for packaging-only tests.
+    -->
+    <?if $(var.EnableProviderRegistration) = "true" ?>
+    <CustomAction Id="RollbackRegisterTsp"
+                  FileRef="ProviderRegistrationExe"
+                  ExeCommand="rollback-install"
+                  Execute="rollback"
+                  Impersonate="no"
+                  Return="ignore" />
+    <CustomAction Id="RegisterTsp"
+                  FileRef="ProviderRegistrationExe"
+                  ExeCommand="install"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="check" />
+    <CustomAction Id="UnregisterTsp"
+                  FileRef="ProviderRegistrationExe"
+                  ExeCommand="uninstall"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="check" />
+
+    <InstallExecuteSequence>
+      <Custom Action="RollbackRegisterTsp"
+              Before="RegisterTsp"
+              Condition="NOT Installed AND NOT REMOVE~=&quot;ALL&quot;" />
+      <Custom Action="RegisterTsp"
+              After="InstallServices"
+              Condition="NOT Installed AND NOT REMOVE~=&quot;ALL&quot;" />
+      <Custom Action="UnregisterTsp"
+              Before="RemoveFiles"
+              Condition="REMOVE~=&quot;ALL&quot;" />
+      <!-- TAPI activates a newly added provider after Windows restarts. -->
+      <ScheduleReboot Before="InstallFinalize"
+                      Condition="NOT Installed AND NOT REMOVE~=&quot;ALL&quot;" />
+    </InstallExecuteSequence>
+    <?endif ?>
+  </Package>
+</Wix>

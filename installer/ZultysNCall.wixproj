@@ -1,0 +1,45 @@
+<Project Sdk="WixToolset.Sdk/6.0.0">
+  <PropertyGroup>
+    <!-- Keep this package x64: TAPISRV loads the provider in-process. -->
+    <InstallerPlatform>x64</InstallerPlatform>
+    <OutputType>Package</OutputType>
+    <OutputName>ZultysNCall</OutputName>
+
+    <!-- MSI versions are three fields; CI supplies the release value. -->
+    <ProductVersion Condition="'$(ProductVersion)' == ''">0.1.0</ProductVersion>
+
+    <!--
+      The native helper implements install, uninstall, and rollback. A normal
+      MSI therefore registers the TSP; setting this false is only useful for a
+      packaging-only test that must not alter machine-wide TAPI state.
+    -->
+    <EnableProviderRegistration Condition="'$(EnableProviderRegistration)' == ''">true</EnableProviderRegistration>
+
+    <!--
+      Payload paths are intentionally supplied by the Windows build pipeline;
+      no source-tree or unbuilt-output path is hard-coded here. See README.md.
+    -->
+    <DefineConstants>$(DefineConstants);ProductVersion=$(ProductVersion);BridgeServiceExe=$(BridgeServiceExe);BridgeRuntimePayload=$(BridgeRuntimePayload);ConfigExe=$(ConfigExe);DiagnosticsExe=$(DiagnosticsExe);TspDll=$(TspDll);ProviderRegistrationExe=$(ProviderRegistrationExe);EnableProviderRegistration=$(EnableProviderRegistration)</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="WixToolset.Util.wixext" Version="6.0.0" />
+  </ItemGroup>
+
+  <Target Name="ValidatePackageInputs" BeforeTargets="Build">
+    <Error Condition="'$(BridgeServiceExe)' == '' Or !Exists('$(BridgeServiceExe)')"
+           Text="BridgeServiceExe must name an existing self-contained service executable." />
+    <Error Condition="'$(BridgeRuntimePayload)' == '' Or !Exists('$(BridgeRuntimePayload)')"
+           Text="BridgeRuntimePayload must name the staged service runtime directory." />
+    <Error Condition="'$(ConfigExe)' == '' Or !Exists('$(ConfigExe)')"
+           Text="ConfigExe must name an existing single-file configuration executable." />
+    <Error Condition="'$(DiagnosticsExe)' == '' Or !Exists('$(DiagnosticsExe)')"
+           Text="DiagnosticsExe must name an existing single-file diagnostics executable." />
+    <Error Condition="'$(TspDll)' == '' Or !Exists('$(TspDll)')"
+           Text="TspDll must name an existing x64 ZultysNCallTsp.tsp." />
+    <Error Condition="'$(ProviderRegistrationExe)' == '' Or !Exists('$(ProviderRegistrationExe)')"
+           Text="ProviderRegistrationExe must name an existing x64 registration helper." />
+    <Error Condition="'$(EnableProviderRegistration)' != 'true' And '$(EnableProviderRegistration)' != 'false'"
+           Text="EnableProviderRegistration must be true or false." />
+  </Target>
+</Project>

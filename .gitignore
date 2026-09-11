@@ -3,3 +3,8 @@ docs/Call_Attached_Data July 2020.pdf
 docs/R18_Feature_Manual_April_2024_2.pdf
 docs/TCP_and UDP_Port_Usage_by_Zultys_Equipment_and_Applications_Mar 2026.pdf
 docs/Zultys_WebSocket_API_Guide_R1_0.pdf
+**/bin/
+**/obj/
+.vs/
+artifacts/
+out/

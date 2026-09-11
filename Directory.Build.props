@@ -1,0 +1,11 @@
+<Project>
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <WarningsNotAsErrors>$(WarningsNotAsErrors);CA1822;CA1848</WarningsNotAsErrors>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+</Project>

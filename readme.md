@@ -1,104 +1,132 @@
 # Zultys to nCall TAPI bridge
 
-This project will expose Zultys call state and controls to nSolve nCall through a
-native Windows TAPI telephony service provider. Its required workflows are caller
-screen pops, outbound calls, and transfers while ZAC remains the operator's
-desktop and media client.
+This repository contains the implementation of a Windows TAPI bridge for nSolve
+nCall. It exposes one native x64 TAPI Service Provider (TSP), while a separate
+Windows service connects to the Zultys MX WebSocket API as a 3rdParty client.
+ZAC remains the operator's desktop and media client.
 
-The delivery plan assumes an upgrade to the latest supported Zultys release. As
-of September 2026, the planning target is MX Release 19 with ZAC 10.0.10, subject
-to confirmation of the exact supported point releases before deployment. The
-bridge will use the documented MX WebSocket API on TCP 7779 as client type
-`3rdParty`, alongside ZAC's `MXIE` session.
+The bridge is intended to give nCall the call events and controls it needs for:
 
-The current MX 16.0.4 and ZAC 8.4.34 installation is a reference environment. It
-cannot validate the target WebSocket integration. Its installed MXTSP/MXIE pair
-will be used in an isolated test session to record the public TAPI behavior that
-nCall expects. Existing ZAC UI Automation probes are legacy investigation tools,
-not part of the planned production path.
+- caller screen pops;
+- outbound calls;
+- hold and retrieve;
+- blind transfer; and
+- assisted transfer.
 
-The target application is 32-bit nCall 5.4.4.477 at
-`C:\Program Files (x86)\nSolve\nCall\nCall.exe`. Binary inspection confirms a
-dedicated TAPI phone-system module. Its exact TAPI calls and callback expectations
-will be captured at runtime against MXTSP and the simulator.
+ZAC itself does not expose a TAPI provider. The bridge does not automate ZAC or
+reuse its private desktop protocol. It controls the configured MX-bound device
+through the documented MX WebSocket/CSTA interface.
 
-The bundled nCall help confirms a selectable `Generic TAPI` mode and expects its
-chosen line to support inbound calls, outbound calls, hold, assisted transfer,
-and blind transfer. nCall must be restarted after changing the selected line.
+## Current implementation
 
-No provider or bridge service has been implemented yet. The planned deliverable
-is a signed per-machine x64 MSI containing a self-contained .NET 10 Windows
-service, native C++ x64 TSP, administrator configuration utility, and TAPI
-registration helper. Development can be driven from WSL, but compilation,
-installation, TAPI interoperability, ZAC coexistence, and end-to-end testing must
-run on Windows. See the [implementation plan](plan.md) for the binary boundaries,
-runtime protocols, MSI behavior, milestones, and work that can start before
-upgrade access is available.
+Milestones 1 and 2 now have working source:
 
-## Proposed architecture
+- Bridge.Core implements CSTA framing, XML request and event handling, a
+  deterministic call-state reducer, and the versioned local pipe contract.
+- Bridge.Service is a .NET 10 Windows service that authenticates, monitors the
+  configured device, executes supported call-control commands, publishes call
+  snapshots and deltas, and accepts multiple local pipe clients.
+- MxSimulator provides deterministic inbound-call and control scenarios without
+  an MX server.
+- Tsp.Provider is a native x64 TSPI provider. It subscribes to bridge call
+  deltas, creates TAPI calls with caller identity and retains original-called
+  identity when later events supply it, notifies TAPI of that identity update,
+  maps outgoing and transfer operations to the service, and completes TSPI
+  requests asynchronously.
+- ProviderRegistration calls lineAddProvider and lineRemoveProvider and stores
+  the permanent provider ID needed for uninstall and rollback.
+- installer and build.ps1 stage the payloads and build a per-machine x64 WiX
+  MSI with provider registration enabled by default.
 
-```text
-nCall (TAPI client)
-        |
-Windows Telephony service (TAPISRV)
-        |
-Native C++ TSPI provider DLL (.tsp)
-        |
-Authenticated local named pipe
-        |
-Windows bridge service
-        |
-TLS WebSocket (client type 3rdParty, TCP 7779)
-        |
-Upgraded Zultys MX
+The managed projects and simulator run under the pinned .NET SDK. The native
+provider and registration helper have compiled with the Windows SDK and MSVC.
+The bridge/simulator pipe path has also been exercised with a persistent
+subscriber and a separate command client.
 
-ZAC (client type MXIE) -> upgraded MX -> bound device and media
-```
+## Deployment target
 
-The provider exposes an operator line and translates TSPI commands and callbacks.
-The bridge service owns MX authentication, monitoring, call correlation,
-reconnection, command execution, and diagnostics. The service and provider use a
-versioned IPC contract with request IDs, asynchronous results, snapshots, and
-ordered call-state events.
+The target application is the 32-bit nCall 5.4.4.477 executable at:
 
-For 64-bit Windows, the provider must be a 64-bit DLL because Windows loads it
-inside TAPISRV. The 32-bit nCall client communicates with TAPISRV through the
-Windows TAPI marshalling layer. A standalone Windows service does not itself
-implement a TAPI provider.
+    C:\Program Files (x86)\nSolve\nCall\nCall.exe
 
-A Windows service cannot depend on ZAC's interactive desktop session. It controls
-the user's bound device through MX; audio remains with ZAC or the existing Zultys
-endpoint.
+Windows TAPI marshals that 32-bit client to the 64-bit TAPISRV process. TAPISRV
+loads the provider in-process, so it must remain x64 even though nCall is
+32-bit. The MSI installs it beside the bridge service and registers that
+absolute path with TAPI.
 
-## Validation and delivery
+The current MX 16.0.4 and ZAC 8.4.34 installation is a reference environment,
+not the target integration. The live integration is planned for the latest
+supported MX/ZAC release, currently MX Release 19 and ZAC 10.0.10, subject to
+confirmation against the deployment system. The reference MXTSP can be used in
+an isolated session to record nCall's public TAPI behavior; it is not a
+dependency or redistributable component of this product.
 
-Build a simulator first to exercise call identity, asynchronous completion,
-multiple simultaneous calls, transfer legs, duplicate events, timeouts, and
-connection loss. After reconnect, reconcile a backend snapshot if supported;
-never replay uncertain dial or transfer requests automatically.
+## Architecture
 
-Test provider registration, line enumeration, call events, and controls on Windows
-with a TAPI diagnostic client, then test nCall's line selection, client screen
-pops, and call handling against a real Zultys test endpoint. A Linux build or
-simulator cannot establish Windows TAPI or Zultys interoperability.
+    32-bit nCall
+          |
+    TAPI32 marshalling
+          |
+    64-bit TAPISRV
+          |
+    ZultysNCallTsp.tsp
+          |
+    \\.\pipe\Zultys.NCall.Bridge.v1
+          |
+    ZultysNCallBridge Windows service
+          |
+    TLS WebSocket, client type 3rdParty
+          |
+    Zultys MX
 
-Deliver an installer that registers and removes the provider through the Windows
-TAPI provider APIs and installs and removes the bridge service. Restrict IPC to
-authorized local principals, protect stored credentials with Windows facilities,
-and keep credentials and full call payloads out of routine logs.
+    ZAC, client type MXIE  ---------------------->  Zultys MX and the same bound device
 
-The MSI installs the service for delayed automatic start, registers the TSP with
-`lineAddProvider`, supports repair and major upgrades, and removes the provider
-with `lineRemoveProvider` during uninstall. MX credentials are entered afterward
-through the configuration utility and never passed through MSI properties.
+The service has no desktop-session dependency. It starts automatically under LocalService,
+stores its configuration in ProgramData, and checks for a completed first-run
+configuration every two seconds. The configuration utility encrypts the MX
+password with machine-scope DPAPI and restricts the configuration file and
+directory to SYSTEM, Administrators, and LocalService. When Windows resolves
+the bridge service SID, it receives the same read access.
 
-## References
+## Build and validation
 
-- [Zultys: ZAC 10.0 User Manual, April 2026](https://www.zultys.com/wp-content/uploads/2026/04/Zultys-Advanced-Communicator-10-User-Manual_April_2026.pdf)
-- [Zultys WebSocket API Guide](docs/Zultys_WebSocket_API_Guide_R1_0.pdf)
-- [Microsoft: Service Providers](https://learn.microsoft.com/en-us/windows/win32/tapi/service-providers)
-- [Microsoft: About the Telephony Service Provider](https://learn.microsoft.com/en-us/windows/win32/tapi/about-the-telephony-service-provider-tsp-)
-- [Microsoft: TSPI](https://learn.microsoft.com/en-us/windows/win32/tapi/telephony-service-provider-interface-tspi-)
-- [nSolve: nCall integration and supported systems](https://www.nsolve.com/telephone-answering-service-software/)
-- [nSolve: nCall help](https://www.nsolve.com/docs/nCall.pdf)
-- [Zultys: MX Release 19.0 and ZAC 10.0.10 announcement](https://www.zultys.com/release/zultys-mx-release-19-0-zac-10-0-10-ai-powered-productivity-tools/)
+Build the MSI from 64-bit Windows with the .NET SDK, MSVC/Windows SDK, CMake,
+and NuGet access:
+
+If the source checkout is in WSL's Linux filesystem, copy or clone it to an
+NTFS working directory before running the Windows build. Windows build tools can
+lose access to generated intermediates through `\\wsl.localhost`; do not build
+the MSI directly from that share.
+
+~~~powershell
+.\build.ps1 -Version 0.1.0
+~~~
+
+The build script creates an unsigned development MSI. Supply a signing
+certificate thumbprint and RequireSignedPayloads for a release build. See the
+[MSI build and validation guide](installer/README.md) for prerequisites, signing,
+and clean-VM installation steps.
+
+The MSI includes `ZultysNCallDiag.exe` for the installed bridge's health and
+call-state checks. Initial installation registers a TAPI provider and schedules
+a Windows restart so TAPI can activate it.
+
+The simulator validates the service and local pipe protocol; it cannot validate
+Windows TAPI marshalling, nCall behavior, ZAC coexistence, or the live MX
+integration. Follow the [simulator exercise](docs/simulator-e2e.md) for the
+current bridge-only run. The remaining checks must run on a Windows test machine
+after the target MX upgrade is available.
+
+## Remaining acceptance work
+
+- Record MXTSP/nCall callback and identity traces in an isolated reference
+  session, then compare the bridge's observable TAPI behavior.
+- Build and install the MSI on a clean Windows VM; test provider enumeration,
+  repair, rollback, upgrade, uninstall, and restart behavior.
+- Configure nCall Generic TAPI against the new line and test caller screen
+  pops, outbound calls, blind transfer, and assisted transfer.
+- Test the documented WebSocket operations against a licensed, upgraded MX
+  endpoint while ZAC controls the same device.
+
+The detailed design, compatibility mapping, and rollout gates are in
+[plan.md](plan.md). The bundled vendor documents are listed there.
